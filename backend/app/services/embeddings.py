@@ -43,6 +43,18 @@ def build_embedding_text(
     return " ".join(part for part in (title or "", tag_text, snippet) if part).strip()
 
 
+def embed_query(text: str) -> list[float]:
+    """Embed a single free-text search query with the same model as videos.
+
+    Kept as its own function (rather than inlined in the search endpoint)
+    so the endpoint's "did it actually re-embed or reuse a cached vector"
+    behavior can be tested by monkeypatching this one call.
+    """
+    model = _get_model()
+    vector = model.encode([text], convert_to_numpy=True, show_progress_bar=False)
+    return vector[0].tolist()
+
+
 def embed_videos(rows: list[dict]) -> dict[str, list[float]]:
     """Embed a batch of videos. Each row needs id, title, tags, description.
 

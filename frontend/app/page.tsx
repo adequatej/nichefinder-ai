@@ -1,49 +1,58 @@
-import { apiGet } from "@/lib/api";
+import Link from "next/link";
 
-type Health = {
-  status: string;
-  db: boolean;
-  redis: boolean;
-};
+import { NicheTable } from "@/components/niche-table";
+import { OpportunityScatter } from "@/components/opportunity-scatter";
+import { StatTile } from "@/components/stat-tile";
+import { getNiches } from "@/lib/api";
+import { formatNumber, formatScore } from "@/lib/format";
 
-async function getHealth(): Promise<Health | null> {
-  try {
-    return await apiGet<Health>("/api/health");
-  } catch {
-    return null;
-  }
-}
+// The niches list endpoint caps at 100 per page (MAX_LIMIT in
+// backend/app/api/niches.py). The sample dataset has well under that, so one
+// page covers everything for now; a later phase would paginate here instead.
+const NICHES_PAGE_SIZE = 100;
 
-function StatusDot({ ok }: { ok: boolean }) {
-  return (
-    <span
-      className={`inline-block h-3 w-3 rounded-full ${ok ? "bg-green-500" : "bg-red-500"}`}
-    />
-  );
-}
+export default async function Dashboard() {
+  const { items: niches } = await getNiches({ limit: NICHES_PAGE_SIZE });
 
-export default async function Home() {
-  const health = await getHealth();
+  const rankedNiches = niches.filter((n) => n.opportunity_score !== null);
+  const totalVideos = niches.reduce((sum, n) => sum + n.video_count, 0);
+  const topNiche = rankedNiches[0] ?? null;
 
   return (
-    <main className="flex min-h-screen flex-col items-center justify-center gap-6 p-8">
-      <h1 className="text-3xl font-bold">NicheFinder AI</h1>
-      <p className="text-sm opacity-70">
-        Find low-competition YouTube niches before everyone else does.
-      </p>
-      <div className="flex flex-col gap-3 rounded-lg border p-6">
-        <div className="flex items-center gap-3">
-          <StatusDot ok={health !== null} />
-          <span>API: {health ? "connected" : "unreachable"}</span>
-        </div>
-        <div className="flex items-center gap-3">
-          <StatusDot ok={health?.db ?? false} />
-          <span>Postgres: {health?.db ? "connected" : "unreachable"}</span>
-        </div>
-        <div className="flex items-center gap-3">
-          <StatusDot ok={health?.redis ?? false} />
-          <span>Redis: {health?.redis ? "connected" : "unreachable"}</span>
-        </div>
+    <main className="mx-auto flex max-w-6xl flex-col gap-8 p-8">
+      <div>
+        <h1 className="text-2xl font-bold">Niche opportunities</h1>
+        <p className="text-sm text-muted-foreground">
+          Demand and supply, scored across the tracked YouTube corpus.
+        </p>
+      </div>
+
+      <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+        <StatTile label="Niches tracked" value={formatNumber(niches.length)} />
+        <StatTile
+          label="Ranked niches"
+          value={`${formatNumber(rankedNiches.length)} / ${formatNumber(niches.length)}`}
+          hint="cleared the eligibility floor"
+        />
+        <StatTile label="Videos analyzed" value={formatNumber(totalVideos)} />
+        {topNiche ? (
+          <Link href={`/niches/${topNiche.id}`}>
+            <StatTile
+              label="Top opportunity"
+              value={formatScore(topNiche.opportunity_score, 0)}
+              hint={topNiche.label}
+            />
+          </Link>
+        ) : (
+          <StatTile label="Top opportunity" value="--" hint="no ranked niches yet" />
+        )}
+      </div>
+
+      <OpportunityScatter niches={niches} />
+
+      <div>
+        <h2 className="mb-3 text-lg font-semibold">All niches</h2>
+        <NicheTable niches={niches} />
       </div>
     </main>
   );

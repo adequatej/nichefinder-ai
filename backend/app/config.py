@@ -8,6 +8,9 @@ class Settings(BaseSettings):
     redis_url: str = "redis://localhost:6379/0"
     youtube_api_key: str = ""
     cache_enabled: bool = True
+    # Shared secret for POST /api/admin/refresh. Empty means the route
+    # refuses every request rather than defaulting to open.
+    admin_token: str = ""
 
     model_config = {"env_file": ".env", "extra": "ignore"}
 
