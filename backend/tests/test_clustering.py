@@ -11,6 +11,7 @@ from app.services.clustering import (
     channel_mode_niche,
     compute_c_tfidf,
     compute_centroids,
+    nearest_centroid,
     tokenize,
 )
 
@@ -96,6 +97,18 @@ def test_assign_noise_points_respects_threshold():
     # ...but not a high one.
     strict = assign_noise_points(embeddings, labels, centroids, threshold=0.95)
     assert strict[2] == -1
+
+
+def test_nearest_centroid_picks_closest_above_threshold():
+    centroids = {1: np.array([1.0, 0.0]), 2: np.array([0.0, 1.0])}
+    assert nearest_centroid(np.array([0.99, 0.05]), centroids, threshold=0.5) == 1
+    assert nearest_centroid(np.array([0.05, 0.99]), centroids, threshold=0.5) == 2
+    # Equidistant from both and below the bar: no niche beats a bad-fit niche.
+    assert nearest_centroid(np.array([-1.0, 0.0]), centroids, threshold=0.5) is None
+
+
+def test_nearest_centroid_with_no_niches_yet():
+    assert nearest_centroid(np.array([1.0, 0.0]), {}, threshold=0.5) is None
 
 
 def test_channel_mode_niche_picks_most_common_and_ignores_unassigned():

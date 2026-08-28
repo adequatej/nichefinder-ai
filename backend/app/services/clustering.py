@@ -23,6 +23,20 @@ channels: niche ids are not stable across runs (HDBSCAN's own cluster
 numbering isn't stable either), only the recomputed state is
 meaningful. video.niche_id and channel.niche_id are cleared
 automatically by the ON DELETE SET NULL foreign keys.
+
+`run_clustering` is the full batch job: expensive, and it changes
+every niche id, so it belongs to the standalone `make cluster` entry
+point, run periodically (a cold start, or occasionally afterward to
+let genuinely new topics form their own niches) rather than on every
+daily cron tick. The daily refresh instead calls
+`assign_new_videos_to_nearest_niches`, which only reads existing niche
+centroids and never changes a niche's id, video_count, or
+channel_count — those stay "as of the last full clustering run" until
+the next one. That staleness is the honest tradeoff for a cheap daily
+job that does not reshuffle every niche's identity underneath anything
+that already links to it (a channel's niche_id is likewise left alone
+day to day; it is recomputed as the mode of its videos only during a
+full run_clustering pass).
 """
 
 from __future__ import annotations
@@ -132,6 +146,26 @@ def _cosine_similarity(a: np.ndarray, b: np.ndarray) -> float:
     return float(np.dot(a, b) / denom)
 
 
+def nearest_centroid(
+    embedding: np.ndarray,
+    centroids: dict[int, np.ndarray],
+    threshold: float = NOISE_SIMILARITY_THRESHOLD,
+) -> int | None:
+    """The id of the closest centroid above `threshold`, or None.
+
+    Shared by assign_noise_points (batch, during a full reclustering
+    pass) and assign_new_videos_to_nearest_niches (incremental, during
+    the daily refresh): both apply the same "no niche beats a bad-fit
+    niche" rule, just to different inputs.
+    """
+    best_id, best_similarity = None, -1.0
+    for cluster_id, centroid in centroids.items():
+        similarity = _cosine_similarity(embedding, centroid)
+        if similarity > best_similarity:
+            best_similarity, best_id = similarity, cluster_id
+    return best_id if best_id is not None and best_similarity > threshold else None
+
+
 def assign_noise_points(
     embeddings: np.ndarray,
     labels: np.ndarray,
@@ -149,15 +183,71 @@ def assign_noise_points(
     for i, label in enumerate(labels):
         if label != -1:
             continue
-        best_cluster_id = None
-        best_similarity = -1.0
-        for cluster_id, centroid in centroids.items():
-            similarity = _cosine_similarity(embeddings[i], centroid)
-            if similarity > best_similarity:
-                best_similarity, best_cluster_id = similarity, cluster_id
-        if best_cluster_id is not None and best_similarity > threshold:
-            new_labels[i] = best_cluster_id
+        assigned = nearest_centroid(embeddings[i], centroids, threshold)
+        if assigned is not None:
+            new_labels[i] = assigned
     return new_labels
+
+
+async def assign_new_videos_to_nearest_niches(
+    session_factory,
+    video_ids: list[str],
+    threshold: float = NOISE_SIMILARITY_THRESHOLD,
+) -> dict:
+    """Assign newly-embedded videos to the nearest existing niche centroid.
+
+    This is the cheap daily-cron path: it only reads existing niche
+    centroids and never creates a niche, changes a niche's id, or
+    touches channel.niche_id. A video that isn't close enough to any
+    existing centroid is left unassigned rather than forced into a
+    poor-fit niche — it becomes a candidate for a real niche of its own
+    the next time a full `run_clustering` pass runs.
+
+    Only English-detected videos are considered, matching
+    run_clustering's own filter (a non-English video passed in here is
+    silently skipped, not assigned): niches are an English-corpus
+    concept, and embedding similarity alone says nothing about
+    language, so it must not be the only gate.
+    """
+    from sqlalchemy import select, update
+
+    from app.db.models import Niche, Video, VideoEmbedding
+
+    if not video_ids:
+        return {"videos_considered": 0, "assigned": 0}
+
+    async with session_factory() as session:
+        niche_rows = (await session.execute(select(Niche.id, Niche.centroid))).all()
+        video_rows = (
+            await session.execute(
+                select(Video.id, VideoEmbedding.embedding)
+                .join(VideoEmbedding, VideoEmbedding.video_id == Video.id)
+                .where(
+                    Video.id.in_(video_ids),
+                    Video.detected_language == "en",
+                )
+            )
+        ).all()
+
+    if not niche_rows or not video_rows:
+        return {"videos_considered": len(video_rows), "assigned": 0}
+
+    centroids = {
+        row.id: np.asarray(row.centroid, dtype=np.float32) for row in niche_rows
+    }
+    assigned_count = 0
+    async with session_factory() as session:
+        for row in video_rows:
+            embedding = np.asarray(row.embedding, dtype=np.float32)
+            niche_id = nearest_centroid(embedding, centroids, threshold)
+            await session.execute(
+                update(Video).where(Video.id == row.id).values(niche_id=niche_id)
+            )
+            if niche_id is not None:
+                assigned_count += 1
+        await session.commit()
+
+    return {"videos_considered": len(video_rows), "assigned": assigned_count}
 
 
 def channel_mode_niche(

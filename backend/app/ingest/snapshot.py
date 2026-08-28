@@ -30,12 +30,21 @@ async def embed_new_videos(session_factory, video_ids: list[str]) -> None:
     await embed_missing_videos(session_factory, video_ids)
 
 
-async def refresh_niche_scores(session_factory) -> None:
-    """Recompute clusters and scores over the whole corpus."""
-    from app.services.clustering import run_clustering
+async def refresh_niche_scores(session_factory, new_video_ids: list[str]) -> None:
+    """Place new videos into existing niches, then rescore.
+
+    This never re-clusters: it assigns the videos this refresh just
+    embedded to the nearest existing niche centroid (or leaves them
+    unassigned) and recomputes demand/supply/opportunity from the
+    current assignments. Run `python -m app.ingest.cluster` (or `make
+    cluster`) periodically to fully recluster and let new topics form
+    their own niches; that's a separate, heavier job on purpose so the
+    daily refresh doesn't reshuffle every niche's id and counts.
+    """
+    from app.services.clustering import assign_new_videos_to_nearest_niches
     from app.services.scoring import run_scoring
 
-    await run_clustering(session_factory)
+    await assign_new_videos_to_nearest_niches(session_factory, new_video_ids)
     await run_scoring(session_factory)
 
 
@@ -117,7 +126,7 @@ async def run_daily_refresh(session_factory, client: YouTubeClient) -> dict:
 
     # Later phases hang off these hooks.
     await embed_new_videos(session_factory, new_ids)
-    await refresh_niche_scores(session_factory)
+    await refresh_niche_scores(session_factory, new_ids)
     run_predictions()
 
     # The in-memory test recorder exposes total_units; the database
