@@ -18,10 +18,11 @@ function colorFor(probability: number): string {
   return BLUE_RAMP[idx];
 }
 
-// Steps 0-2 (light blue) are too pale for white text; darker steps get white.
+// Steps 0-3 (light/mid blue) hold dark text at small badge size; white text
+// only clears contrast from step 4 (#256abf, ~5:1) on down.
 function textColorFor(probability: number): string {
   const idx = Math.min(BLUE_RAMP.length - 1, Math.floor(probability * BLUE_RAMP.length));
-  return idx <= 1 ? "#0b0b0b" : "#ffffff";
+  return idx <= 3 ? "#0b0b0b" : "#ffffff";
 }
 
 export function BreakoutBadge({ probability }: { probability: number }) {

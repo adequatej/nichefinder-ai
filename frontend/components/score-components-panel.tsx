@@ -13,7 +13,7 @@ const ROWS: { key: keyof NonNullable<NicheDetail["score_components"]>; label: st
   { key: "median_views", label: "Median views", format: (v) => formatNumber(v) },
   { key: "median_velocity", label: "Median velocity", format: (v) => `${formatNumber(v)} views/day` },
   { key: "median_engagement", label: "Median engagement", format: (v) => formatPercent(v) },
-  { key: "uploads_per_week", label: "Uploads / week (channel_count wide)", format: (v) => formatScore(v, 2) },
+  { key: "uploads_per_week", label: "Uploads / week (niche-wide, last 90 days)", format: (v) => formatScore(v, 2) },
   { key: "active_channel_count", label: "Active channels", format: (v) => formatNumber(v) },
   { key: "video_count", label: "Videos", format: (v) => formatNumber(v) },
 ];

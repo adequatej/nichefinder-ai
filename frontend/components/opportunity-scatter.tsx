@@ -52,9 +52,16 @@ function rgbToHex([r, g, b]: [number, number, number]): string {
   return `#${[r, g, b].map((v) => Math.round(v).toString(16).padStart(2, "0")).join("")}`;
 }
 
+// Discrete marks need a contrast floor the continuous 100->700 fill range
+// doesn't: palette.md calls out step 250 as the lightest step that still
+// clears 2:1 against the light surface. Without this floor, min-max
+// normalizing opportunity_score maps the lowest-scoring ranked niche to
+// step 100 (~1.2:1) and its dot disappears into the card background.
+const MARK_FLOOR_INDEX = 3; // BLUE_RAMP[3] === step 250
+
 function sequentialBlue(t: number): string {
   const clamped = Math.min(1, Math.max(0, t));
-  const scaled = clamped * (BLUE_RAMP.length - 1);
+  const scaled = MARK_FLOOR_INDEX + clamped * (BLUE_RAMP.length - 1 - MARK_FLOOR_INDEX);
   const lo = Math.floor(scaled);
   const hi = Math.min(BLUE_RAMP.length - 1, lo + 1);
   const frac = scaled - lo;
@@ -159,7 +166,7 @@ export function OpportunityScatter({ niches }: { niches: NicheSummary[] }) {
           <span>Opportunity</span>
           <span
             className="h-2 w-16 rounded-full"
-            style={{ background: `linear-gradient(to right, ${BLUE_RAMP[0]}, ${BLUE_RAMP[BLUE_RAMP.length - 1]})` }}
+            style={{ background: `linear-gradient(to right, ${BLUE_RAMP[MARK_FLOOR_INDEX]}, ${BLUE_RAMP[BLUE_RAMP.length - 1]})` }}
           />
           <span>low - high</span>
         </div>
