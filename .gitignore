@@ -13,6 +13,7 @@ ml/data/
 *.parquet
 
 .DS_Store
+.claude/
 .terraform/
 *.tfstate
 *.tfstate.backup
