@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import health, niches
+from app.api import channels, health, niches, videos
 
 app = FastAPI(title="NicheFinder AI", version="0.1.0")
 
@@ -14,3 +14,5 @@ app.add_middleware(
 
 app.include_router(health.router)
 app.include_router(niches.router)
+app.include_router(channels.router)
+app.include_router(videos.router)
