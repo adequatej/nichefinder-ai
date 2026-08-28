@@ -194,7 +194,14 @@ async def main() -> int:
     salt = uuid.uuid4().hex[:10]
     offset_salt = int(time.time())
 
-    async with httpx.AsyncClient(base_url=BASE_URL, timeout=30) as client:
+    # A generous timeout: the very first /api/search call in a
+    # container whose HF cache is cold (e.g. right after `docker
+    # compose up --build`) downloads the sentence-transformers model
+    # rather than just loading it from disk, which can take well over
+    # 30s on a slow connection. If this still times out, run one
+    # `/api/search?q=warmup` by hand first to force the download outside
+    # the benchmark.
+    async with httpx.AsyncClient(base_url=BASE_URL, timeout=120) as client:
         try:
             health = await client.get("/api/health")
             health.raise_for_status()

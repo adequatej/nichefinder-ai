@@ -35,7 +35,14 @@ sentence-transformers/clustering pipeline over throwaway synthetic
 titles would only add noise (and, if run against a shared dev
 database, corrupt real niche assignments). Both the temporary
 untracking and the monkeypatches are restored/undone in a finally
-block regardless of outcome.
+block, which covers any exception raised during the run but not a hard
+kill (SIGKILL, container stop) -- the list of originally-tracked
+channel ids lives only in process memory, so a kill between the
+untrack commit and the finally block would need a manual `UPDATE
+channels SET is_tracked = true WHERE id IN (...)` to recover. The
+start-of-run cleanup step (deleting any leftover bench-* channels)
+makes a *second* run self-healing after a crash; it does not by itself
+restore real channels' tracked flags from a first run's crash.
 
 Naive strategy: benchmark-only code that does what an unoptimized
 implementation would do for the same monitoring job -- one
@@ -474,6 +481,27 @@ def print_report(run_label: str, source: str, groups: list[dict]) -> None:
 
     naive_units = by_strategy.get("naive", {}).get("units_spent", 0)
     optimized_units = by_strategy.get("optimized", {}).get("units_spent", 0)
+
+    # Sanity check: the measured numbers must match the hand-computable
+    # formulas exactly. If they ever disagree, the scenario constants
+    # and the mocks (or a code change to snapshot.py) have drifted
+    # apart, and that is a bug in this benchmark worth surfacing loudly
+    # rather than silently reporting a wrong-but-plausible number.
+    expected_naive = naive_units_for(
+        NUM_TRACKED_CHANNELS, NUM_TRACKED_CHANNELS * NEW_VIDEOS_PER_CHANNEL
+    )
+    expected_optimized = optimized_expected_units(
+        NUM_TRACKED_CHANNELS, NEW_VIDEOS_PER_CHANNEL
+    )
+    if naive_units != expected_naive or optimized_units != expected_optimized:
+        print(
+            "\nMISMATCH: measured units do not match the hand-computed "
+            f"formulas (naive: measured {naive_units} vs expected "
+            f"{expected_naive}; optimized: measured {optimized_units} vs "
+            f"expected {expected_optimized}). Treat the numbers below as "
+            "suspect until this is explained."
+        )
+
     if naive_units:
         saved_pct = (naive_units - optimized_units) / naive_units * 100
         print(

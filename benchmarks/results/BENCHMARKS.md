@@ -67,7 +67,7 @@ docker compose exec api python -m benchmarks.bench_quota
 ```
 
 Postgres was reachable, so this wrote real rows to `api_quota_log`
-(run_label `benchmark-quota-2026-08-28-b5f02b35`) and read them back
+(run_label `benchmark-quota-2026-08-28-6086f69b`) and read them back
 with the same `(day, strategy_label)` grouping `/api/stats/quota` uses
 (`app.services.quota_stats.aggregate_quota_rows`). Confirmed by
 querying the table directly afterward, and confirmed that the 20
@@ -79,7 +79,7 @@ after).
 ### Result (copied from actual script output)
 
 ```
-Quota benchmark (real Postgres, api_quota_log), run_label=benchmark-quota-2026-08-28-b5f02b35
+Quota benchmark (real Postgres, api_quota_log), run_label=benchmark-quota-2026-08-28-6086f69b
 Scenario: 20 tracked channels, 5 new videos each (100 new videos total)
 strategy      units_spent  calls_uncached
 naive                2100             120
@@ -98,6 +98,11 @@ result with no randomness in the scenario.
 The `--memory-only` flag (in-memory `ListQuotaRecorder` on both sides,
 no database at all) was also run and produced the identical 2100 /
 23 split, confirming the DB-backed and in-memory code paths agree.
+Both measured totals are also checked in-script against
+`naive_units_for` / `optimized_expected_units` (the same
+hand-computable formulas `benchmarks/tests/test_bench_quota.py`
+asserts against); a mismatch prints a loud warning instead of silently
+reporting a wrong-but-plausible number. Neither run triggered it.
 
 ### Cross-check against docs/quota-math.md
 
@@ -169,11 +174,13 @@ search: warm full response (cache hit)          30  p50=     1.3ms  p95=     1.5
 ```
 
 Sample corpus at the time of this run: 12 channels, 300 videos (273
-English-detected, 273 embedded and clustered into 14 niches), loaded
-via `make bootstrap-sample` + `make cluster` — see `ml/README.md` for
-why this fixture's *content* (i.i.d.-random view counts) is not
-meaningful, though that limitation is irrelevant here since this
-benchmark only measures response time, never accuracy or ranking.
+English-detected). `make cluster` embedded all 300 videos and
+clustered the 273 considered (English-detected) into 14 niches, all
+273 assigned. Loaded via `make bootstrap-sample` + `make cluster` —
+see `ml/README.md` for why this fixture's *content* (i.i.d.-random
+view counts) is not meaningful, though that limitation is irrelevant
+here since this benchmark only measures response time, never accuracy
+or ranking.
 
 ### Reading the numbers
 
