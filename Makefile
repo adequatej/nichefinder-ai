@@ -30,5 +30,11 @@ cluster: ## Embed videos, cluster into niches, and score opportunity
 test: ## Run backend tests
 	docker compose exec api pytest -q
 
+bench-quota: ## Compare naive vs optimized YouTube quota strategies
+	docker compose exec api python -m benchmarks.bench_quota
+
+bench-latency: ## Measure cold/warm latency for /api/search and /api/niches
+	docker compose exec api python -m benchmarks.bench_latency
+
 psql: ## Open a Postgres shell
 	docker compose exec db psql -U nichefinder nichefinder
