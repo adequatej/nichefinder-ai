@@ -21,12 +21,22 @@ from app.services.youtube import YouTubeClient
 RECENT_DAYS = 30
 
 
-def embed_new_videos(video_ids: list[str]) -> None:
-    """No-op hook. P3 fills this in with embedding generation."""
+async def embed_new_videos(session_factory, video_ids: list[str]) -> None:
+    """Embed the videos this refresh just saw for the first time."""
+    from app.services.embeddings import embed_missing_videos
+
+    if not video_ids:
+        return
+    await embed_missing_videos(session_factory, video_ids)
 
 
-def refresh_niche_scores() -> None:
-    """No-op hook. P3 fills this in with niche score recomputation."""
+async def refresh_niche_scores(session_factory) -> None:
+    """Recompute clusters and scores over the whole corpus."""
+    from app.services.clustering import run_clustering
+    from app.services.scoring import run_scoring
+
+    await run_clustering(session_factory)
+    await run_scoring(session_factory)
 
 
 def run_predictions() -> None:
@@ -106,8 +116,8 @@ async def run_daily_refresh(session_factory, client: YouTubeClient) -> dict:
     stats["new_videos"] = len(new_ids)
 
     # Later phases hang off these hooks.
-    embed_new_videos(new_ids)
-    refresh_niche_scores()
+    await embed_new_videos(session_factory, new_ids)
+    await refresh_niche_scores(session_factory)
     run_predictions()
 
     # The in-memory test recorder exposes total_units; the database

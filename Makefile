@@ -24,6 +24,9 @@ bootstrap: ## Run the real YouTube bootstrap (needs YOUTUBE_API_KEY in .env)
 bootstrap-sample: ## Load deterministic sample data, no API key needed
 	docker compose exec api python -m app.ingest.sample_data
 
+cluster: ## Embed videos, cluster into niches, and score opportunity
+	docker compose exec api python -m app.ingest.cluster
+
 test: ## Run backend tests
 	docker compose exec api pytest -q
 
