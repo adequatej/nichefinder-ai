@@ -9,26 +9,35 @@ type to fall back to.
 Requires TEST_DATABASE_URL pointing at a running Postgres with the
 schema migrated (pgvector extension enabled). The whole module is
 skipped when that's unset, so `pytest -q` stays green with zero
-infrastructure. To run it:
+infrastructure. To run it, against a *disposable* database:
 
-    docker compose up -d db          # or point at any pgvector Postgres
+    docker compose up -d db
+    docker compose exec db createdb -U nichefinder nichefinder_test
     cd backend
-    alembic upgrade head             # against that same database
-    DATABASE_URL="postgresql+asyncpg://nichefinder:nichefinder@localhost:5432/nichefinder" \
-    TEST_DATABASE_URL="postgresql+asyncpg://nichefinder:nichefinder@localhost:5432/nichefinder" \
+    DATABASE_URL="postgresql+asyncpg://nichefinder:nichefinder@localhost:5432/nichefinder_test" \
+        alembic upgrade head
+    DATABASE_URL="postgresql+asyncpg://nichefinder:nichefinder@localhost:5432/nichefinder_test" \
+    TEST_DATABASE_URL="postgresql+asyncpg://nichefinder:nichefinder@localhost:5432/nichefinder_test" \
         .venv/bin/pytest -q tests/test_api_endpoints.py
 
-Set both to the *same* database. TEST_DATABASE_URL is read here, by
-the test module itself, to build the session factory used to override
-FastAPI's get_session dependency (deliberately, rather than relying on
-app.db.session's module-level engine, which is built once at import
-time from DATABASE_URL/get_settings() and cached via lru_cache).
-DATABASE_URL is also needed because a couple of endpoints (admin
-refresh) call service functions that import app.db.session.SessionLocal
-directly rather than going through the overridden dependency; for
-those to see the same seeded data, that module-level engine has to
-point at the same database, which only happens if DATABASE_URL is set
-before the app is imported.
+Set both to the *same* database, and that database's name must end in
+"_test" (enforced below) — this module's cleanup fixture DELETEs every
+row from channels/videos/niches/video_embeddings/predictions/
+api_quota_log before and after every test. Pointed at the database a
+real `make bootstrap` populated, that would silently destroy a corpus
+that cost real quota to build. Never point either variable at the
+plain "nichefinder" database from docker-compose.yml.
+
+TEST_DATABASE_URL is read here, by the test module itself, to build
+the session factory used to override FastAPI's get_session dependency
+(deliberately, rather than relying on app.db.session's module-level
+engine, which is built once at import time from DATABASE_URL/
+get_settings() and cached via lru_cache). DATABASE_URL is also needed
+because a couple of endpoints (admin refresh) call service functions
+that import app.db.session.SessionLocal directly rather than going
+through the overridden dependency; for those to see the same seeded
+data, that module-level engine has to point at the same database,
+which only happens if DATABASE_URL is set before the app is imported.
 """
 
 from __future__ import annotations
@@ -39,9 +48,10 @@ from datetime import datetime, timedelta, timezone
 import pytest
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import delete
+from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from app.db.models import Channel, Niche, Prediction, Video, VideoEmbedding
+from app.db.models import ApiQuotaLog, Channel, Niche, Prediction, Video, VideoEmbedding
 from app.db.session import get_session
 from app.main import app
 from app.services.api_cache import get_api_cache
@@ -53,6 +63,18 @@ pytestmark = pytest.mark.skipif(
     not TEST_DATABASE_URL,
     reason="requires TEST_DATABASE_URL pointing at a running Postgres with the schema migrated",
 )
+
+if TEST_DATABASE_URL:
+    _db_name = make_url(TEST_DATABASE_URL).database or ""
+    if not _db_name.endswith("_test"):
+        raise RuntimeError(
+            f"TEST_DATABASE_URL points at database {_db_name!r}, which does not "
+            "end in '_test'. This test module wipes channels/videos/niches/"
+            "video_embeddings/predictions before and after every test — refusing "
+            "to run against anything that isn't an obviously disposable database. "
+            "Create one (e.g. `createdb nichefinder_test`), migrate it, and point "
+            "TEST_DATABASE_URL/DATABASE_URL at that instead."
+        )
 
 EMBEDDING_DIM = 384
 
@@ -95,6 +117,7 @@ async def _clean_tables(session_factory):
             await session.execute(delete(Video))
             await session.execute(delete(Channel))
             await session.execute(delete(Niche))
+            await session.execute(delete(ApiQuotaLog))
             await session.commit()
 
     await _wipe()
@@ -199,6 +222,43 @@ async def test_niche_detail_includes_score_components(client, db_session):
     body = resp.json()
     assert body["label"] == "detail-me"
     assert body["score_components"] == {"video_count": 30}
+
+
+@pytest.mark.asyncio
+async def test_niche_videos_404_for_missing_niche(client):
+    resp = await client.get("/api/niches/999999/videos")
+    assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_niche_videos_returns_only_that_niches_videos_paginated(client, db_session):
+    niche = await _seed_niche(db_session, label="videos-niche", opportunity_score=10.0)
+    other_niche = await _seed_niche(db_session, label="other-niche", opportunity_score=20.0)
+    await _seed_channel(db_session, channel_id="UCnv")
+    await _seed_video(
+        db_session, "vidnv000001", "UCnv", niche_id=niche.id, published_at=NOW
+    )
+    await _seed_video(
+        db_session,
+        "vidnv000002",
+        "UCnv",
+        niche_id=niche.id,
+        published_at=NOW - timedelta(days=1),
+    )
+    # Belongs to a different niche: must not show up here.
+    await _seed_video(db_session, "vidnv000003", "UCnv", niche_id=other_niche.id)
+    await db_session.commit()
+
+    resp = await client.get(f"/api/niches/{niche.id}/videos")
+    assert resp.status_code == 200
+    body = resp.json()
+    ids = [item["id"] for item in body["items"]]
+    assert ids == ["vidnv000001", "vidnv000002"]  # newest published first
+
+    resp = await client.get(f"/api/niches/{niche.id}/videos", params={"limit": 1, "offset": 1})
+    assert resp.status_code == 200
+    ids = [item["id"] for item in resp.json()["items"]]
+    assert ids == ["vidnv000002"]
 
 
 @pytest.mark.asyncio
@@ -312,14 +372,92 @@ async def test_breakouts_orders_by_probability_desc(client, db_session):
 async def test_quota_stats_empty_ledger(client):
     resp = await client.get("/api/stats/quota")
     assert resp.status_code == 200
-    assert resp.json() == {"by_day": []}
+    assert resp.json() == {"window_days": 30, "by_day": []}
 
 
 @pytest.mark.asyncio
-async def test_admin_refresh_requires_token(client, monkeypatch):
-    monkeypatch.setattr("app.api.admin.get_settings", lambda: type(
-        "S", (), {"admin_token": "secret"}
-    )())
+async def test_quota_stats_groups_by_day_and_strategy_from_real_rows(client, db_session):
+    """Seeds through the actual ApiQuotaLog table (not hand-built dicts)
+    so this exercises the func.date()-over-asyncpg boundary that the
+    pure aggregate_quota_rows unit tests (tests/test_quota_stats.py)
+    cannot: those hand-construct `date` objects and never touch the DB.
+    """
+    today = datetime.now(timezone.utc)
+    yesterday = today - timedelta(days=1)
+    db_session.add_all(
+        [
+            ApiQuotaLog(
+                endpoint="channels.list", units=1, cache_hit=False,
+                strategy_label="optimized", created_at=today,
+            ),
+            ApiQuotaLog(
+                endpoint="channels.list", units=1, cache_hit=False,
+                strategy_label="optimized", created_at=today,
+            ),
+            ApiQuotaLog(
+                endpoint="search.list", units=0, cache_hit=True,
+                strategy_label="optimized", created_at=today,
+            ),
+            ApiQuotaLog(
+                endpoint="search.list", units=100, cache_hit=False,
+                strategy_label="naive", created_at=yesterday,
+            ),
+        ]
+    )
+    await db_session.commit()
+
+    resp = await client.get("/api/stats/quota")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["window_days"] == 30
+
+    by_key = {(row["day"], row["strategy_label"]): row for row in body["by_day"]}
+    today_key = (today.date().isoformat(), "optimized")
+    yesterday_key = (yesterday.date().isoformat(), "naive")
+
+    assert today_key in by_key
+    assert today_key[0] == today.date().isoformat()  # a plain "YYYY-MM-DD", not a timestamp
+    assert by_key[today_key]["units_spent"] == 2
+    assert by_key[today_key]["calls_uncached"] == 2
+    assert by_key[today_key]["calls_cached"] == 1
+    assert by_key[today_key]["units_saved"] == 100  # reconstructed from UNIT_COSTS
+
+    assert by_key[yesterday_key]["units_spent"] == 100
+    assert by_key[yesterday_key]["calls_cached"] == 0
+
+
+@pytest.mark.asyncio
+async def test_quota_stats_excludes_rows_outside_the_window(client, db_session):
+    old = datetime.now(timezone.utc) - timedelta(days=100)
+    db_session.add(
+        ApiQuotaLog(
+            endpoint="videos.list", units=1, cache_hit=False,
+            strategy_label="optimized", created_at=old,
+        )
+    )
+    await db_session.commit()
+
+    resp = await client.get("/api/stats/quota", params={"days": 30})
+    assert resp.json() == {"window_days": 30, "by_day": []}
+
+
+@pytest.mark.asyncio
+async def test_admin_refresh_denies_when_admin_token_is_unset(client, monkeypatch):
+    """The default, unset admin_token must refuse every request rather
+    than defaulting to open — the whole point of the guard.
+    """
+    monkeypatch.setattr(
+        "app.api.admin.get_settings", lambda: type("S", (), {"admin_token": ""})()
+    )
+    resp = await client.post("/api/admin/refresh", headers={"X-Admin-Token": ""})
+    assert resp.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_admin_refresh_requires_matching_token(client, monkeypatch):
+    monkeypatch.setattr(
+        "app.api.admin.get_settings", lambda: type("S", (), {"admin_token": "secret"})()
+    )
     resp = await client.post("/api/admin/refresh")
     assert resp.status_code == 403
 
@@ -328,25 +466,23 @@ async def test_admin_refresh_requires_token(client, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_admin_refresh_does_not_touch_youtube_client(client, monkeypatch):
+async def test_admin_refresh_makes_no_outbound_http_calls(client, monkeypatch):
     """The dev-only refresh must only recompute scores from data already
-    in Postgres. It must never construct a YouTubeClient or reach the
-    ingestion/bootstrap path, which is the whole point of "(dev only)".
+    in Postgres — never reach the ingestion/bootstrap path, which is the
+    whole point of "(dev only)". respx with no routes registered and
+    assert_all_mocked=True makes any outbound HTTP call raise, so this
+    catches a future regression regardless of which module it comes
+    through (unlike patching YouTubeClient directly, which only proves
+    admin.py itself doesn't import it today).
     """
-    monkeypatch.setattr("app.api.admin.get_settings", lambda: type(
-        "S", (), {"admin_token": "secret"}
-    )())
+    import respx
 
-    called = {"youtube_client": False}
+    monkeypatch.setattr(
+        "app.api.admin.get_settings", lambda: type("S", (), {"admin_token": "secret"})()
+    )
 
-    class ExplodingYouTubeClient:
-        def __init__(self, *args, **kwargs):
-            called["youtube_client"] = True
-            raise AssertionError("admin refresh must not construct a YouTubeClient")
+    with respx.mock(assert_all_mocked=True, assert_all_called=False):
+        resp = await client.post("/api/admin/refresh", headers={"X-Admin-Token": "secret"})
 
-    monkeypatch.setattr("app.services.youtube.YouTubeClient", ExplodingYouTubeClient)
-
-    resp = await client.post("/api/admin/refresh", headers={"X-Admin-Token": "secret"})
     assert resp.status_code == 200
-    assert called["youtube_client"] is False
     assert resp.json()["status"] == "ok"
