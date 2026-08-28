@@ -8,7 +8,7 @@ behind `make bootstrap` / the worker's cron job, not an HTTP route.
 
 It also does not trigger a full clustering pass (app/ingest/cluster.py,
 clustering.run_clustering): per that module's own docstring, a full run
-deletes and rebuins every niche's id, which is disruptive enough that
+deletes and rebuilds every niche's id, which is disruptive enough that
 it belongs to the standalone `make cluster` entry point, not something
 an HTTP call should be able to kick off casually.
 
