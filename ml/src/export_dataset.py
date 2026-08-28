@@ -33,7 +33,6 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-import numpy as np
 import pandas as pd
 from sqlalchemy import create_engine, event, text
 from sqlalchemy.engine import Engine
@@ -93,11 +92,13 @@ def export_dataset(
     with engine.connect() as conn:
         df = pd.read_sql(text(QUERY), conn)
 
-    # register_vector gives back a numpy array per row that has an
-    # embedding, and None for the LEFT JOIN misses; store as a plain
-    # list so it round-trips through parquet as a nested list column.
+    # register_vector gives back a pgvector.Vector per row that has an
+    # embedding (installed pgvector-python version: 0.5.0 — this is
+    # its object, not a raw numpy array or list), and None for the
+    # LEFT JOIN misses; store as a plain list so it round-trips
+    # through parquet as a nested list column.
     df["embedding"] = df["embedding"].apply(
-        lambda value: np.asarray(value, dtype=np.float32).tolist() if value is not None else None
+        lambda value: value.to_list() if value is not None else None
     )
 
     output_path = Path(output_path)

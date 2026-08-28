@@ -115,8 +115,15 @@ def title_has_question_or_exclaim(title: str | None) -> int:
 
 def tag_count(tags: list[str] | None) -> int:
     """Most videos have no tags (see the comment on Video.tags in the
-    backend schema); that case is just len(None-as-empty) == 0."""
-    return len(tags) if tags else 0
+    backend schema); that case is just len(None-as-empty) == 0.
+
+    Checks `is None` rather than a truthy test: a Postgres ARRAY column
+    round-tripped through a parquet export can come back as a numpy
+    array rather than a plain list, and a non-empty numpy array's truth
+    value is ambiguous (`if tags` raises), where `is None` is always
+    unambiguous regardless of the container type.
+    """
+    return 0 if tags is None else len(tags)
 
 
 def publish_hour_sin_cos(published_at: datetime) -> tuple[float, float]:

@@ -8,6 +8,7 @@ from __future__ import annotations
 import math
 from datetime import datetime, timedelta, timezone
 
+import numpy as np
 import pytest
 
 from src.features import (
@@ -74,6 +75,15 @@ def test_tag_count_handles_missing():
     assert tag_count(["soccer", "highlights"]) == 2
     assert tag_count(None) == 0
     assert tag_count([]) == 0
+
+
+def test_tag_count_handles_numpy_array():
+    # A Postgres ARRAY column round-tripped through a parquet export can
+    # come back as a numpy array rather than a plain list; a non-empty
+    # array's truth value is ambiguous, so tag_count must not rely on
+    # a truthy check.
+    assert tag_count(np.array(["soccer", "highlights"])) == 2
+    assert tag_count(np.array([])) == 0
 
 
 def test_publish_hour_sin_cos_known_values():
