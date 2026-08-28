@@ -116,6 +116,13 @@ consistent with "several thousand." The estimate holds up; this
 benchmark replaces "should cost around" with a real, reproducible
 measured number.
 
+One asymmetry worth naming: the optimized side also refreshes channel
+stats (the batched `channels.list` call) as part of the same run,
+while the naive side's search-per-topic never does that job at all.
+The naive side is therefore doing strictly less total work and still
+costs about 91x more (2100 / 23) — so if anything, 98.9 percent is a
+conservative statement of the saving, not an inflated one.
+
 ## Latency benchmark
 
 ### What it measures

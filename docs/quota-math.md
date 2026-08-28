@@ -49,7 +49,7 @@ A straightforward implementation of the same daily job would run one search per 
 | Naive: search per topic plus one call per video | several thousand |
 | This design: playlist diffing plus 50-id batching | about 110 to 125 |
 
-The benchmark script `benchmarks/bench_quota.py` runs both strategies against the real quota ledger and reports the measured saving. The saving comes from the architecture, not from caching: even with every cache empty, the optimized strategy costs a small fraction of the naive one.
+The benchmark script `benchmarks/bench_quota.py` runs both strategies against the real quota ledger and reports the measured saving; see `benchmarks/results/BENCHMARKS.md` for the actual numbers from running it, and how they compare to the estimates above. The saving comes from the architecture, not from caching: even with every cache empty, the optimized strategy costs a small fraction of the naive one.
 
 ## Where the ledger lives
 
