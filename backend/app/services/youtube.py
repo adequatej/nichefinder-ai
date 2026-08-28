@@ -69,6 +69,9 @@ class YouTubeClient:
             "q": q,
         }
         merged.update(params)
+        # Passing None for a param drops it, so callers can make an
+        # untyped search (no type filter) with type=None.
+        merged = {key: value for key, value in merged.items() if value is not None}
         return await self._request("search.list", merged)
 
     async def list_channels(self, ids: list[str]) -> list[dict]:

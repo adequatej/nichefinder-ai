@@ -18,6 +18,12 @@ migrate: ## Apply database migrations
 revision: ## Create a new migration (usage: make revision m="add foo table")
 	docker compose exec api alembic revision --autogenerate -m "$(m)"
 
+bootstrap: ## Run the real YouTube bootstrap (needs YOUTUBE_API_KEY in .env)
+	docker compose exec api python -m app.ingest.bootstrap
+
+bootstrap-sample: ## Load deterministic sample data, no API key needed
+	docker compose exec api python -m app.ingest.sample_data
+
 test: ## Run backend tests
 	docker compose exec api pytest -q
 
