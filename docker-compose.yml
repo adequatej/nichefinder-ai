@@ -37,6 +37,7 @@ services:
       - "8000:8000"
     volumes:
       - ./backend:/code
+      - ./benchmarks:/code/benchmarks
     depends_on:
       db:
         condition: service_healthy
